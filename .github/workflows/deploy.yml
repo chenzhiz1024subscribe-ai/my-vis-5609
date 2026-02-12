@@ -11,7 +11,7 @@ permissions:
   id-token: write
 
 jobs:
-  build:
+  deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,8 +27,4 @@ jobs:
         with:
           path: build
 
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
       - uses: actions/deploy-pages@v4
