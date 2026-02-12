@@ -1,108 +1,163 @@
 <script>
-    import { onMount } from "svelte";
+  import { onMount } from "svelte";
 
-    let canvas;
+  let maxClicks = 10;
+  let usedClicks = 0;
+  $: remaining = maxClicks - usedClicks;
 
-    onMount(() => {
-        const gl = canvas.getContext("webgl");
+  let canvas;
+  let gl;
+  let program;
+  let startTime = Date.now();
 
-        const vertexShaderSource = `
-            attribute vec2 position;
-            varying vec2 vUv;
+  function increase() {
+    if (usedClicks < maxClicks) {
+      usedClicks++;
+    }
+  }
 
-            void main() {
-                vUv = position * 0.5 + 0.5;
-                gl_Position = vec4(position, 0.0, 1.0);
-            }
-        `;
+  function decrease() {
+    if (usedClicks > 0) {
+      usedClicks--;
+    }
+  }
 
-        const fragmentShaderSource = `
-            precision mediump float;
+  onMount(() => {
+    gl = canvas.getContext("webgl");
 
-            varying vec2 vUv;
-            uniform float uTime;
+    const vertexShaderSource = `
+      attribute vec2 position;
+      varying vec2 vUv;
+      void main() {
+        vUv = position * 0.5 + 0.5;
+        gl_Position = vec4(position, 0.0, 1.0);
+      }
+    `;
 
-            float wave(vec2 uv) {
-                float w = sin(uv.x * 20.0 + uTime * 2.0) * 0.08;
-                w += cos(uv.y * 15.0 + uTime * 1.5) * 0.06;
-                w += sin((uv.x + uv.y) * 10.0 + uTime) * 0.05;
-                return w;
-            }
+    const fragmentShaderSource = `
+      precision mediump float;
+      varying vec2 vUv;
+      uniform float u_time;
+      uniform float u_strength;
 
-            void main() {
-                float h = wave(vUv);
+      void main() {
+        float wave1 = sin(vUv.x * 10.0 + u_time * 2.0);
+        float wave2 = sin(vUv.y * 8.0 - u_time * 1.5);
+        float wave = (wave1 + wave2) * 0.5;
 
-                vec3 deepWater = vec3(0.0, 0.2, 0.5);
-                vec3 shallowWater = vec3(0.0, 0.5, 0.9);
+        float intensity = wave * u_strength;
 
-                float fresnel = pow(1.0 - vUv.y, 3.0);
+        vec3 deepBlue = vec3(0.0, 0.2, 0.5);
+        vec3 lightBlue = vec3(0.2, 0.6, 1.0);
 
-                vec3 color = mix(deepWater, shallowWater, h + 0.5);
+        float gradient = vUv.y;
+        vec3 color = mix(deepBlue, lightBlue, gradient);
 
-                float highlight = pow(abs(h), 2.0) * 5.0;
+        float highlight = smoothstep(0.4, 0.8, intensity + 0.5);
 
-                vec3 finalColor = color + highlight + fresnel * 0.3;
+        gl_FragColor = vec4(color + highlight * 0.3, 1.0);
+      }
+    `;
 
-                gl_FragColor = vec4(finalColor, 1.0);
-            }
-        `;
+    function compile(type, source) {
+      const shader = gl.createShader(type);
+      gl.shaderSource(shader, source);
+      gl.compileShader(shader);
+      return shader;
+    }
 
-        function createShader(type, source) {
-            const shader = gl.createShader(type);
-            gl.shaderSource(shader, source);
-            gl.compileShader(shader);
-            return shader;
-        }
+    const vertexShader = compile(gl.VERTEX_SHADER, vertexShaderSource);
+    const fragmentShader = compile(gl.FRAGMENT_SHADER, fragmentShaderSource);
 
-        const vertexShader = createShader(gl.VERTEX_SHADER, vertexShaderSource);
-        const fragmentShader = createShader(gl.FRAGMENT_SHADER, fragmentShaderSource);
+    program = gl.createProgram();
+    gl.attachShader(program, vertexShader);
+    gl.attachShader(program, fragmentShader);
+    gl.linkProgram(program);
+    gl.useProgram(program);
 
-        const program = gl.createProgram();
-        gl.attachShader(program, vertexShader);
-        gl.attachShader(program, fragmentShader);
-        gl.linkProgram(program);
-        gl.useProgram(program);
+    const buffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+    gl.bufferData(
+      gl.ARRAY_BUFFER,
+      new Float32Array([
+        -1, -1,
+         1, -1,
+        -1,  1,
+         1,  1
+      ]),
+      gl.STATIC_DRAW
+    );
 
-        const positionLocation = gl.getAttribLocation(program, "position");
-        const timeLocation = gl.getUniformLocation(program, "uTime");
+    const position = gl.getAttribLocation(program, "position");
+    gl.enableVertexAttribArray(position);
+    gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0);
 
-        const buffer = gl.createBuffer();
-        gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-        gl.bufferData(
-            gl.ARRAY_BUFFER,
-            new Float32Array([
-                -1, -1,
-                 1, -1,
-                -1,  1,
-                 1,  1,
-            ]),
-            gl.STATIC_DRAW
-        );
+    function render() {
+      const time = (Date.now() - startTime) / 1000;
 
-        gl.enableVertexAttribArray(positionLocation);
-        gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+      gl.uniform1f(
+        gl.getUniformLocation(program, "u_time"),
+        time
+      );
 
-        function render(time) {
-            gl.viewport(0, 0, canvas.width, canvas.height);
-            gl.clearColor(0.0, 0.0, 0.0, 1.0);
-            gl.clear(gl.COLOR_BUFFER_BIT);
+      // 关键：点击越多，波浪越强
+      const strength = usedClicks / maxClicks;
+      gl.uniform1f(
+        gl.getUniformLocation(program, "u_strength"),
+        strength
+      );
 
-            gl.uniform1f(timeLocation, time * 0.001);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      requestAnimationFrame(render);
+    }
 
-            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-            requestAnimationFrame(render);
-        }
-
-        requestAnimationFrame(render);
-    });
+    render();
+  });
 </script>
 
-<canvas bind:this={canvas} width="900" height="600"></canvas>
+<h1>Interactive Water Visualization</h1>
+
+<div class="controls">
+  <p>Remaining Clicks: {remaining}</p>
+
+  <button on:click={increase}>Increase</button>
+  <button on:click={decrease}>Decrease</button>
+
+  <br /><br />
+
+  <label>
+    Set Max Clicks:
+    <input type="number" bind:value={maxClicks} min="1" />
+  </label>
+</div>
+
+<canvas bind:this={canvas} width="800" height="400"></canvas>
 
 <style>
-    canvas {
-        display: block;
-        margin: 0 auto;
-        border: 1px solid #ccc;
-    }
+  h1 {
+    font-size: 28px;
+  }
+
+  .controls {
+    margin-bottom: 20px;
+  }
+
+  button {
+    background-color: #3498db;
+    font-size: large;
+    margin-right: 10px;
+    padding: 10px;
+    border: none;
+    color: white;
+    cursor: pointer;
+  }
+
+  button:hover {
+    background-color: #2980b9;
+  }
+
+  canvas {
+    border: 2px solid #ccc;
+    display: block;
+  }
 </style>
